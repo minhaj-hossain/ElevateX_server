@@ -133,6 +133,75 @@ async function run() {
       }
     });
 
+    // home section
+
+    /* -----------------------------------------
+   GET TOP FEATURED CLASSES BY BOOKING COUNT
+   ----------------------------------------- */
+    app.get("/api/classes/featured", async (req, res) => {
+      try {
+        const limitCount = parseInt(req.query.limit, 10) || 3;
+
+        // Constrain search filter exclusively to already evaluated/approved performance programs
+        const targetQueryConditions = { status: "Approved" };
+
+        const targetCollection =
+          global.classesCollection || db.collection("class");
+
+        // Fetch records, sorting in descending order by bookingCount to catch highest traction assets
+        const highlyBookedClasses = await targetCollection
+          .find(targetQueryConditions)
+          .sort({ bookingCount: -1 })
+          .limit(limitCount)
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          count: highlyBookedClasses.length,
+          classes: highlyBookedClasses,
+        });
+      } catch (error) {
+        console.error(
+          "Featured high-performance tracking aggregation engine error:",
+          error,
+        );
+        res.status(500).json({
+          success: false,
+          error:
+            "Internal server processing failure while streaming featured classes data records.",
+        });
+      }
+    });
+
+    /* -----------------------------------------
+   GET LATEST FORUM POSTS FOR COMMUNITY PULSE
+   ----------------------------------------- */
+    app.get("/api/forum-posts/latest", async (req, res) => {
+      try {
+        const limitCount = parseInt(req.query.limit, 10) || 4;
+        // const forumPostCollection = db.collection("forumPost");
+
+        // Fetching latest posts sorted by creation date timestamp metric field in descending sequence
+        const fallbackResults = await forumPostCollection
+          .find({})
+          .sort({ createdAtDate: -1, _id: -1 })
+          .limit(limitCount)
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          count: fallbackResults.length,
+          posts: fallbackResults,
+        });
+      } catch (error) {
+        console.error("Latest forum pulse stream runtime route crash:", error);
+        res.status(500).json({
+          success: false,
+          error:
+            "Internal server processing failure while compiling community activity rows.",
+        });
+      }
+    });
     // Fetch classes list with pagination and query states
     app.get("/api/classes", async (req, res) => {
       try {
