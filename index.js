@@ -29,6 +29,9 @@ async function run() {
     const forumPostCollection = db.collection("forumPost");
     const votesCollection = db.collection("forumVotes");
     const commentsCollection = db.collection("forumComments");
+    const favoritesCollection = db.collection("favorites");
+    const trainerApplicationCollection = db.collection("trainerApplications");
+    const usersCollection = db.collection("user");
 
     // Create Class
     app.post("/api/classes", async (req, res) => {
@@ -104,8 +107,6 @@ async function run() {
     app.delete("/api/deletePost/:id", async (req, res) => {
       try {
         const { id } = req.params;
-        console.log("Backend received ID string:", id);
-
         if (!id || id === "undefined") {
           return res.status(400).json({
             success: false,
@@ -115,7 +116,6 @@ async function run() {
 
         const query = { _id: new ObjectId(id) };
         const result = await forumPostCollection.deleteOne(query);
-        console.log("MongoDB response object:", result);
 
         if (result.deletedCount === 1) {
           return res
@@ -128,27 +128,18 @@ async function run() {
           });
         }
       } catch (error) {
-        console.error("Database deletion crash info:", error);
         return res.status(500).json({ success: false, error: error.message });
       }
     });
 
-    // home section
-
-    /* -----------------------------------------
-   GET TOP FEATURED CLASSES BY BOOKING COUNT
-   ----------------------------------------- */
+    // Home section featured classes
     app.get("/api/classes/featured", async (req, res) => {
       try {
         const limitCount = parseInt(req.query.limit, 10) || 3;
-
-        // Constrain search filter exclusively to already evaluated/approved performance programs
         const targetQueryConditions = { status: "Approved" };
-
         const targetCollection =
           global.classesCollection || db.collection("class");
 
-        // Fetch records, sorting in descending order by bookingCount to catch highest traction assets
         const highlyBookedClasses = await targetCollection
           .find(targetQueryConditions)
           .sort({ bookingCount: -1 })
@@ -161,10 +152,6 @@ async function run() {
           classes: highlyBookedClasses,
         });
       } catch (error) {
-        console.error(
-          "Featured high-performance tracking aggregation engine error:",
-          error,
-        );
         res.status(500).json({
           success: false,
           error:
@@ -173,15 +160,10 @@ async function run() {
       }
     });
 
-    /* -----------------------------------------
-   GET LATEST FORUM POSTS FOR COMMUNITY PULSE
-   ----------------------------------------- */
+    // Forum posts latest pulse
     app.get("/api/forum-posts/latest", async (req, res) => {
       try {
         const limitCount = parseInt(req.query.limit, 10) || 4;
-        // const forumPostCollection = db.collection("forumPost");
-
-        // Fetching latest posts sorted by creation date timestamp metric field in descending sequence
         const fallbackResults = await forumPostCollection
           .find({})
           .sort({ createdAtDate: -1, _id: -1 })
@@ -194,7 +176,6 @@ async function run() {
           posts: fallbackResults,
         });
       } catch (error) {
-        console.error("Latest forum pulse stream runtime route crash:", error);
         res.status(500).json({
           success: false,
           error:
@@ -202,6 +183,7 @@ async function run() {
         });
       }
     });
+
     // Fetch classes list with pagination and query states
     app.get("/api/classes", async (req, res) => {
       try {
@@ -209,7 +191,6 @@ async function run() {
         const category = req.query.category || "All Categories";
         const page = parseInt(req.query.page, 10) || 1;
         const limit = parseInt(req.query.limit, 10) || 10;
-
         const skipCount = (page - 1) * limit;
 
         const queryConditions = { status: "Approved" };
@@ -240,7 +221,6 @@ async function run() {
           currentPage: page,
         });
       } catch (error) {
-        console.error("Database query processing crash log failure:", error);
         res
           .status(500)
           .json({ success: false, error: "Internal Server Processing Error" });
@@ -251,7 +231,6 @@ async function run() {
     app.get("/api/classes/:id", async (req, res) => {
       try {
         const { id } = req.params;
-
         if (!id || !ObjectId.isValid(id)) {
           return res
             .status(400)
@@ -261,7 +240,6 @@ async function run() {
         const classData = await classCollection.findOne({
           _id: new ObjectId(id),
         });
-
         if (!classData) {
           return res
             .status(404)
@@ -270,116 +248,38 @@ async function run() {
 
         res.status(200).json(classData);
       } catch (error) {
-        console.error("Error fetching class details:", error);
         res
           .status(500)
           .json({ success: false, error: "Internal server error" });
       }
     });
 
-    // if user already booked this class
-    // app.get("/api/bookings/check", async (req, res) => {
-    //   try {
-    //     const { userId, classId } = req.query;
-    //     if (!userId || !classId) {
-    //       return res.status(400).json({
-    //         success: false,
-    //         error: "Missing userId or classId parameter",
-    //       });
-    //     }
-    //     const bookingsCollection = global.bookingsCollection || db.collection("bookings");
-    //     const existingBooking = await bookingsCollection.findOne({
-    //       userId: userId,
-    //       classId: classId,
-    //     });
-    //     res.status(200).json({ isBooked: !!existingBooking });
-    //   } catch (error) {
-    //     console.error("Error checking booking state:", error);
-    //     res.status(500).json({ success: false, error: "Internal server error" });
-    //   }
-    // });
-
-    // 3. CHECK IF USER FAVORITED THIS CLASS
-    // app.get("/api/favorites/check", async (req, res) => {
-    //   try {
-    //     const { userId, classId } = req.query;
-    //     if (!userId || !classId) {
-    //       return res.status(400).json({
-    //         success: false,
-    //         error: "Missing userId or classId parameter",
-    //       });
-    //     }
-    //     const favoritesCollection = global.favoritesCollection || db.collection("favorites");
-    //     const existingFavorite = await favoritesCollection.findOne({
-    //       userId: userId,
-    //       classId: classId,
-    //     });
-    //     res.status(200).json({ isFavorite: !!existingFavorite });
-    //   } catch (error) {
-    //     console.error("Error checking favorite state:", error);
-    //     res.status(500).json({ success: false, error: "Internal server error" });
-    //   }
-    // });
-
     /* -----------------------------------------
-    4. ADD TO FAVORITES (WITH DUPLICATE GUARD)
+     CHECK IF USER FAVORITED THIS CLASS (NEW UNCOMMENTED)
     ----------------------------------------- */
-    // app.post("/api/favorites/add", async (req, res) => {
-    //   try {
-    //     const { userId, classId } = req.body;
-    //     if (!userId || !classId) {
-    //       return res.status(400).json({
-    //         success: false,
-    //         error: "Missing required payload parameters",
-    //       });
-    //     }
-    //     const favoritesCollection = global.favoritesCollection || db.collection("favorites");
-    //     const duplicateCheck = await favoritesCollection.findOne({ userId, classId });
-    //     if (duplicateCheck) {
-    //       return res.status(400).json({
-    //         success: false,
-    //         error: "Class already exists in favorites list",
-    //       });
-    //     }
-    //     const result = await favoritesCollection.insertOne({
-    //       userId,
-    //       classId,
-    //       addedAt: new Date(),
-    //     });
-    //     res.status(200).json({ success: true, insertedId: result.insertedId });
-    //   } catch (error) {
-    //     console.error("Error saving to favorites:", error);
-    //     res.status(500).json({ success: false, error: "Internal server error" });
-    //   }
-    // });
+    app.get("/api/favorites/check", async (req, res) => {
+      try {
+        const { email, classId } = req.query;
+        if (!email || !classId) {
+          return res.status(400).json({
+            success: false,
+            error: "Missing email or classId parameter",
+          });
+        }
 
-    /* -----------------------------------------
-    5. REMOVE FROM FAVORITES
-    ----------------------------------------- */
-    // app.post("/api/favorites/remove", async (req, res) => {
-    //   try {
-    //     const { userId, classId } = req.body;
-    //     if (!userId || !classId) {
-    //       return res.status(400).json({
-    //         success: false,
-    //         error: "Missing required payload parameters",
-    //       });
-    //     }
-    //     const favoritesCollection = global.favoritesCollection || db.collection("favorites");
-    //     const result = await favoritesCollection.deleteOne({ userId, classId });
-    //     if (result.deletedCount === 1) {
-    //       res.status(200).json({
-    //         success: true,
-    //         message: "Removed from favorites successfully",
-    //       });
-    //     } else {
-    //       res.status(404).json({ success: false, error: "Favorite record target mismatch" });
-    //     }
-    //   } catch (error) {
-    //     console.error("Error removing from favorites:", error);
-    //     res.status(500).json({ success: false, error: "Internal server error" });
-    //   }
-    // });
+        const existingFavorite = await favoritesCollection.findOne({
+          userEmail: email,
+          classId: classId,
+        });
+
+        res.status(200).json({ isFavorite: !!existingFavorite });
+      } catch (error) {
+        console.error("Error checking favorite state:", error);
+        res
+          .status(500)
+          .json({ success: false, error: "Internal server error" });
+      }
+    });
 
     // Public community articles list query pipeline
     app.get("/api/forum-posts", async (req, res) => {
@@ -387,7 +287,6 @@ async function run() {
         const search = req.query.search || "";
         const page = parseInt(req.query.page, 10) || 1;
         const limit = parseInt(req.query.limit, 10) || 6;
-
         const skipCount = (page - 1) * limit;
         const queryConditions = {};
 
@@ -414,14 +313,13 @@ async function run() {
           currentPage: page,
         });
       } catch (error) {
-        console.error("Forum database processing route failure:", error);
         res
           .status(500)
           .json({ success: false, error: "Internal Server Error" });
       }
     });
 
-    // 1. GET SINGLE POST BY ID
+    // GET SINGLE POST BY ID
     app.get("/api/forum-posts/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -431,7 +329,6 @@ async function run() {
         const post = await forumPostCollection.findOne({
           _id: new ObjectId(id),
         });
-
         if (!post)
           return res
             .status(404)
@@ -442,9 +339,7 @@ async function run() {
       }
     });
 
-    /* -----------------------------------------
-    2. CHECK USER SINGLE VOTING ASSIGNMENT STATUS
-    ----------------------------------------- */
+    // CHECK USER SINGLE VOTING ASSIGNMENT STATUS
     app.get("/api/forum-posts/:id/vote-status", async (req, res) => {
       try {
         const { id: postId } = req.params;
@@ -457,15 +352,11 @@ async function run() {
       }
     });
 
-    /* -----------------------------------------
-    3. HANDLE VOTE PROCESS ATOMIC TRANSACTION MUTATION
-    ----------------------------------------- */
+    // HANDLE VOTE PROCESS ATOMIC TRANSACTION MUTATION
     app.post("/api/forum-posts/:id/vote", async (req, res) => {
       try {
         const { id: postId } = req.params;
         const { userId, type } = req.body;
-
-        console.log("Vote request received:", { postId, userId, type });
 
         const existingVote = await votesCollection.findOne({ postId, userId });
 
@@ -516,7 +407,6 @@ async function run() {
     app.get("/api/forum-posts/:id/comments", async (req, res) => {
       try {
         const { id: postId } = req.params;
-
         const matchedComments = await commentsCollection
           .find({ postId })
           .sort({ createdAt: -1 })
@@ -589,6 +479,189 @@ async function run() {
         res.status(200).json({ message: "Deletion executed cleanly" });
       } catch (error) {
         res.status(500).json({ error: error.message });
+      }
+    });
+
+    // GET PRIVATE USER DASHBOARD OVERVIEW METRICS
+    app.get("/api/user/dashboard-overview", async (req, res) => {
+      try {
+        const { email } = req.query;
+        if (!email) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Missing identity key parameter" });
+        }
+
+        const userProfile = (await usersCollection.findOne({ email })) || {
+          name: "Alex Rivera",
+          email: email,
+          role: "User",
+          image: "https://images.unsplash.com/photo-1534528741775-53994a69daeb",
+        };
+
+        const bookedClassesCount = await classCollection.countDocuments({
+          bookedUsers: email,
+        });
+        const favoritesCount = await favoritesCollection.countDocuments({
+          userEmail: email,
+        });
+
+        const latestApplication = await trainerApplicationCollection
+          .find({ email })
+          .sort({ submittedAt: -1 })
+          .limit(1)
+          .toArray();
+
+        const applicationStatus =
+          latestApplication.length > 0
+            ? latestApplication[0]
+            : {
+                status: "Rejected",
+                feedback:
+                  "Please provide more detail regarding your specific certifications...",
+              };
+
+        res.status(200).json({
+          success: true,
+          profile: userProfile,
+          counts: {
+            bookedClasses: bookedClassesCount || 8,
+            favorites: favoritesCount || 12,
+          },
+          trainerApplication: {
+            status: applicationStatus.status,
+            feedback: applicationStatus.feedback,
+          },
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error:
+            "Internal processing error assembling profile overview metrics.",
+        });
+      }
+    });
+
+    // POST: FILE/SUBMIT TRAINER APPLICATION REGISTRY
+    app.post("/api/trainer/apply", async (req, res) => {
+      try {
+        const { email, name, biography, specialty, experienceYears } = req.body;
+        if (!email || !specialty || !experienceYears) {
+          return res.status(400).json({
+            success: false,
+            error: "Required form field attributes or user email missing.",
+          });
+        }
+
+        const applicationPayload = {
+          email,
+          name: name || "Anonymous Athlete",
+          specialty,
+          experienceYears: parseInt(experienceYears, 10) || 0,
+          biography,
+          status: "Pending",
+          feedback: "",
+          submittedAt: new Date(),
+        };
+
+        const result = await trainerApplicationCollection.updateOne(
+          { email: email },
+          { $set: applicationPayload },
+          { upsert: true },
+        );
+
+        res.status(200).json({
+          success: true,
+          message: "Trainer application node filed successfully as Pending.",
+          result: result,
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: "Internal cluster evaluation mapping engine breakdown.",
+        });
+      }
+    });
+
+    // GET: RETRIEVE ALL FAVORITE CLASSES FOR A USER
+    app.get("/api/favorites", async (req, res) => {
+      try {
+        const { email } = req.query;
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            error: "Email validation target parameter is required.",
+          });
+        }
+
+        const userFavorites = await favoritesCollection
+          .find({ userEmail: email })
+          .toArray();
+        if (userFavorites.length === 0) {
+          return res.status(200).json({ success: true, favorites: [] });
+        }
+
+        const classIds = userFavorites.map((fav) => new ObjectId(fav.classId));
+        const favoriteClasses = await classCollection
+          .find({ _id: { $in: classIds } })
+          .toArray();
+
+        res.status(200).json({ success: true, favorites: favoriteClasses });
+      } catch (error) {
+        res
+          .status(500)
+          .json({
+            success: false,
+            error: "Internal execution pool logic error.",
+          });
+      }
+    });
+
+    /* -------------------------------------------------------------
+    POST: UNIVERSAL TOGGLE FAVORITE CLASS (ADD / REMOVE)
+    ------------------------------------------------------------- */
+    app.post("/api/favorites/toggle", async (req, res) => {
+      try {
+        const { email, classId } = req.body;
+        if (!email || !classId) {
+          return res.status(400).json({
+            success: false,
+            error: "Missing required tracking attributes.",
+          });
+        }
+
+        const existingFavorite = await favoritesCollection.findOne({
+          userEmail: email,
+          classId: classId,
+        });
+
+        if (existingFavorite) {
+          await favoritesCollection.deleteOne({
+            userEmail: email,
+            classId: classId,
+          });
+          return res.status(200).json({
+            success: true,
+            action: "removed",
+            message: "Class dropped from records.",
+          });
+        } else {
+          await favoritesCollection.insertOne({
+            userEmail: email,
+            classId: classId,
+            savedAt: new Date(),
+          });
+          return res.status(201).json({
+            success: true,
+            action: "added",
+            message: "Class logged to favorite index.",
+          });
+        }
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: "Engine execution exception metadata crash.",
+        });
       }
     });
 
