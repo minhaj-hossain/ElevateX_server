@@ -954,12 +954,10 @@ async function run() {
         });
       } catch (error) {
         console.error("Manage users retrieval failure:", error);
-        res
-          .status(500)
-          .json({
-            success: false,
-            error: "Failed to compile system users roster matrix.",
-          });
+        res.status(500).json({
+          success: false,
+          error: "Failed to compile system users roster matrix.",
+        });
       }
     });
 
@@ -979,28 +977,22 @@ async function run() {
         );
 
         if (result.matchedCount === 0) {
-          return res
-            .status(404)
-            .json({
-              success: false,
-              error: "Target account registry profile missing.",
-            });
+          return res.status(404).json({
+            success: false,
+            error: "Target account registry profile missing.",
+          });
         }
 
-        res
-          .status(200)
-          .json({
-            success: true,
-            message: `User account is now ${newStatus}.`,
-            newStatus,
-          });
+        res.status(200).json({
+          success: true,
+          message: `User account is now ${newStatus}.`,
+          newStatus,
+        });
       } catch (error) {
-        res
-          .status(500)
-          .json({
-            success: false,
-            error: "Database state modification failed.",
-          });
+        res.status(500).json({
+          success: false,
+          error: "Database state modification failed.",
+        });
       }
     });
 
@@ -1017,32 +1009,113 @@ async function run() {
         );
 
         if (result.matchedCount === 0) {
-          return res
-            .status(404)
-            .json({
-              success: false,
-              error: "Target account registry profile missing.",
-            });
+          return res.status(404).json({
+            success: false,
+            error: "Target account registry profile missing.",
+          });
         }
 
-        res
-          .status(200)
-          .json({
-            success: true,
-            message:
-              "Account role upgraded to Admin authorization tiers successfully.",
-          });
+        res.status(200).json({
+          success: true,
+          message:
+            "Account role upgraded to Admin authorization tiers successfully.",
+        });
       } catch (error) {
-        res
-          .status(500)
-          .json({
-            success: false,
-            error: "Database state modification failed.",
-          });
+        res.status(500).json({
+          success: false,
+          error: "Database state modification failed.",
+        });
       }
     });
 
-   
+    // -------------------------------------------------------------
+    // 1. GET ALL PENDING TRAINER APPLICATIONS WITH ANCHOR METRICS
+    // -------------------------------------------------------------
+    app.get("/api/admin/trainer-applications", async (req, res) => {
+      try {
+        // Fetch applications with a status of pending
+        const applications = await trainerApplicationCollection
+          .find({ status: "Pending" })
+          .toArray();
+
+        // Dynamically calculate metrics to fill the upper summary boxes from image_f4ea42.png
+        const totalPending = applications.length;
+
+        // Calculate average experience
+        const totalExpYears = applications.reduce(
+          (acc, app) => acc + (parseFloat(app.experience) || 0),
+          0,
+        );
+        const avgExperience =
+          totalPending > 0 ? (totalExpYears / totalPending).toFixed(1) : "0.0";
+
+        // Gather count of unique specialties
+        const uniqueSpecialties = new Set(
+          applications.map((app) => app.specialty?.toLowerCase().trim()),
+        ).size;
+
+        res.status(200).json({
+          success: true,
+          metrics: {
+            totalPending,
+            newToday: totalPending > 0 ? Math.ceil(totalPending * 0.3) : 0, // Mocked proportional distribution
+            avgExperience: `${avgExperience}y`,
+            specialtiesCount: uniqueSpecialties || 0,
+          },
+          applications,
+        });
+      } catch (error) {
+        console.error("Failed to gather applications inventory:", error);
+        res
+          .status(500)
+          .json({ success: false, error: "Database reading failure." });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 2. PROCESS TRAINER APPLICATION (APPROVE / REJECT)
+    // -------------------------------------------------------------
+    app.post(
+      "/api/admin/trainer-applications/:id/process",
+      async (req, res) => {
+        try {
+          const appId = req.params.id;
+          const { action, feedback, userEmail } = req.body; // action: "Approve" or "Reject"
+
+          if (!action || !["Approve", "Reject"].includes(action)) {
+            return res.status(400).json({
+              success: false,
+              error: "Invalid resolution action requested.",
+            });
+          }
+
+          // 1. Update the application tracking state document
+          const updatedStatus = action === "Approve" ? "Approved" : "Rejected";
+          await trainerAppCollection.updateOne(
+            { _id: new ObjectId(appId) },
+            { $set: { status: updatedStatus, adminFeedback: feedback || "" } },
+          );
+
+          // 2. Update the target user's system security role profile
+          const roleUpdateValue = action === "Approve" ? "Trainer" : "Member";
+          await usersCollection.updateOne(
+            { email: userEmail },
+            { $set: { role: roleUpdateValue } },
+          );
+
+          res.status(200).json({
+            success: true,
+            message: `Application successfully processed. Candidate has been ${updatedStatus.toLowerCase()}.`,
+          });
+        } catch (error) {
+          console.error("Failed to process trainer review update:", error);
+          res.status(500).json({
+            success: false,
+            error: "Internal mutation workflow execution failure.",
+          });
+        }
+      },
+    );
 
     await db.command({ ping: 1 });
     console.log("Connected successfully to MongoDB!");
