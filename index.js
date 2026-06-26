@@ -1117,6 +1117,219 @@ async function run() {
       },
     );
 
+    // -------------------------------------------------------------
+    // 1. GET ALL TRAINERS WITH PERFORMANCE METRICS & PAGINATION
+    // -------------------------------------------------------------
+    app.get("/api/admin/trainers", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 4;
+        const skip = (page - 1) * limit;
+
+        // 1. Find users whose explicit security system role tier is "Trainer"
+        const query = { role: "trainer" };
+        const totalTrainers = await usersCollection.countDocuments(query);
+
+        const trainers = await usersCollection
+          .find(query)
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        // 2. Generate metrics dynamically matching image_f559e8.png fields
+        // Calculate a real average if ratings are stored in your DB, otherwise fallback
+        const totalRatingSum = trainers.reduce(
+          (acc, t) => acc + (parseFloat(t.rating) || 4.8),
+          0,
+        );
+        const avgRating =
+          trainers.length > 0
+            ? (totalRatingSum / trainers.length).toFixed(1)
+            : "4.8";
+
+        res.status(200).json({
+          success: true,
+          trainers,
+          pagination: {
+            totalTrainers,
+            currentPage: page,
+            totalPages: Math.ceil(totalTrainers / limit),
+            showingCount: trainers.length,
+          },
+          metrics: {
+            activeTrainers: totalTrainers,
+            avgRating: parseFloat(avgRating),
+          },
+        });
+      } catch (error) {
+        console.error("Failed to gather platform trainer statistics:", error);
+        res
+          .status(500)
+          .json({ success: false, error: "Database reading failure." });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 2. DEMOTE TRAINER PRIVILEGES BACK TO USER (MEMBER)
+    // -------------------------------------------------------------
+    app.patch("/api/admin/trainers/:id/demote", async (req, res) => {
+      try {
+        const trainerId = req.params.id;
+
+        // Mutate the account's authorization matrix tier back to standard Member
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(trainerId) },
+          {
+            $set: {
+              role: "user",
+              // Optional: Clear out profile fields unique to professional status
+              status: "Active",
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res
+            .status(404)
+            .json({
+              success: false,
+              error: "Target trainer account registration missing.",
+            });
+        }
+
+        res.status(200).json({
+          success: true,
+          message:
+            "Trainer privileges stripped successfully. Account reverted to standard user authorization.",
+        });
+      } catch (error) {
+        console.error("Failed to execute account demotion parameters:", error);
+        res
+          .status(500)
+          .json({ success: false, error: "Internal role mutation failure." });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 1. GET ALL SUBMITTED CLASSES WITH STATUS METRICS
+    // -------------------------------------------------------------
+    app.get("/api/admin/classes", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 4;
+        const skip = (page - 1) * limit;
+
+        const totalClasses = await classCollection.countDocuments({});
+        const classes = await classCollection
+          .find({})
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        // Dynamically aggregate metrics for header pills matching image_f570aa.png
+        const pendingCount = await classCollection.countDocuments({
+          status: "Pending",
+        });
+        const approvedCount = await classCollection.countDocuments({
+          status: "Approved",
+        });
+
+        res.status(200).json({
+          success: true,
+          classes,
+          pagination: {
+            totalClasses,
+            currentPage: page,
+            totalPages: Math.ceil(totalClasses / limit),
+            showingCount: classes.length,
+          },
+          metrics: {
+            pendingCount,
+            approvedCount,
+          },
+        });
+      } catch (error) {
+        console.error("Failed to read master class logs:", error);
+        res
+          .status(500)
+          .json({ success: false, error: "Database reading failure." });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 2. UPDATE CLASS STATUS (APPROVE / REJECT)
+    // -------------------------------------------------------------
+    app.patch("/api/admin/classes/:id/status", async (req, res) => {
+      try {
+        const classId = req.params.id;
+        const { status } = req.body; // Expects "Approved" or "Rejected"
+
+        if (!["Approved", "Rejected"].includes(status)) {
+          return res
+            .status(400)
+            .json({
+              success: false,
+              error: "Invalid status parameters provided.",
+            });
+        }
+
+        const result = await classCollection.updateOne(
+          { _id: new ObjectId(classId) },
+          { $set: { status } },
+        );
+
+        if (result.matchedCount === 0) {
+          return res
+            .status(404)
+            .json({ success: false, error: "Target class session not found." });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: `Class status updated to ${status} successfully.`,
+        });
+      } catch (error) {
+        res
+          .status(500)
+          .json({
+            success: false,
+            error: "Database state modification failed.",
+          });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 3. DELETE A CLASS SUBMISSION PERMANENTLY
+    // -------------------------------------------------------------
+    app.delete("/api/admin/classes/:id", async (req, res) => {
+      try {
+        const classId = req.params.id;
+
+        const result = await classCollection.deleteOne({
+          _id: new ObjectId(classId),
+        });
+
+        if (result.deletedCount === 0) {
+          return res
+            .status(404)
+            .json({
+              success: false,
+              error: "Target class already removed or missing.",
+            });
+        }
+
+        res.status(200).json({
+          success: true,
+          message:
+            "Fitness program successfully purged from platform registries.",
+        });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, error: "Database removal pipeline error." });
+      }
+    });
+
     await db.command({ ping: 1 });
     console.log("Connected successfully to MongoDB!");
   } catch (err) {
