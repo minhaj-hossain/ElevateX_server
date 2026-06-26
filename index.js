@@ -885,6 +885,164 @@ async function run() {
           .json({ error: "Internal Server Error syncing schedule pipeline." });
       }
     });
+    // Admin dashboard analytics overview pipeline
+    app.get("/api/admin/overview-stats", async (req, res) => {
+      try {
+        const [totalUsers, totalClasses, totalBooked] = await Promise.all([
+          usersCollection.countDocuments({}),
+          classCollection.countDocuments({}),
+          bookingsCollection.countDocuments({}),
+        ]);
+
+        console.log("Admin metrics compiled successfully:", {
+          totalUsers,
+          totalClasses,
+          totalBooked,
+        });
+
+        res.status(200).json({
+          success: true,
+          stats: {
+            totalUsers,
+            totalClasses,
+            totalBooked,
+          },
+        });
+      } catch (error) {
+        console.error("Failed to compile admin metrics:", error);
+        res.status(500).json({
+          success: false,
+          error: "Internal server error gathering metric matrix data.",
+        });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 1. GET ALL USERS WITH OVERVIEW METRICS
+    // -------------------------------------------------------------
+    app.get("/api/admin/users", async (req, res) => {
+      try {
+        // Fetch users list
+        const users = await usersCollection.find({}).toArray();
+
+        // Dynamically calculate metrics from user collection data to populate cards matching image_f46e5b.png
+        const totalUsers = users.length;
+        const activeTrainers = users.filter(
+          (u) => u.role?.toLowerCase() === "trainer",
+        ).length;
+        const flaggedAccounts = users.filter(
+          (u) => u.status?.toLowerCase() === "blocked",
+        ).length;
+
+        // Simulate new signups metric calculation
+        const newSignups = users.filter((u) => {
+          if (!u.joinDate) return false;
+          const joined = new Date(u.joinDate);
+          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+          return joined >= oneDayAgo;
+        }).length;
+
+        res.status(200).json({
+          success: true,
+          metrics: {
+            totalUsers,
+            activeTrainers,
+            newSignups: newSignups || 0,
+            flaggedAccounts,
+          },
+          users,
+        });
+      } catch (error) {
+        console.error("Manage users retrieval failure:", error);
+        res
+          .status(500)
+          .json({
+            success: false,
+            error: "Failed to compile system users roster matrix.",
+          });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 2. TOGGLE USER BLOCK/UNBLOCK STATUS (SOFT BLOCK)
+    // -------------------------------------------------------------
+    app.patch("/api/admin/users/:id/toggle-block", async (req, res) => {
+      try {
+        const userId = req.params.id;
+        const { currentStatus } = req.body; // Expects "Active" or "Blocked"
+
+        const newStatus = currentStatus === "Blocked" ? "Active" : "Blocked";
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: { status: newStatus } },
+        );
+
+        if (result.matchedCount === 0) {
+          return res
+            .status(404)
+            .json({
+              success: false,
+              error: "Target account registry profile missing.",
+            });
+        }
+
+        res
+          .status(200)
+          .json({
+            success: true,
+            message: `User account is now ${newStatus}.`,
+            newStatus,
+          });
+      } catch (error) {
+        res
+          .status(500)
+          .json({
+            success: false,
+            error: "Database state modification failed.",
+          });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 3. PROMOTE SYSTEM ACCOUNT STATUS TO ADMIN
+    // -------------------------------------------------------------
+    app.patch("/api/admin/users/:id/make-admin", async (req, res) => {
+      try {
+        const userId = req.params.id;
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: { role: "Admin" } },
+        );
+
+        if (result.matchedCount === 0) {
+          return res
+            .status(404)
+            .json({
+              success: false,
+              error: "Target account registry profile missing.",
+            });
+        }
+
+        res
+          .status(200)
+          .json({
+            success: true,
+            message:
+              "Account role upgraded to Admin authorization tiers successfully.",
+          });
+      } catch (error) {
+        res
+          .status(500)
+          .json({
+            success: false,
+            error: "Database state modification failed.",
+          });
+      }
+    });
+
+   
 
     await db.command({ ping: 1 });
     console.log("Connected successfully to MongoDB!");
