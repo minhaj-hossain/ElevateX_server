@@ -1,6 +1,7 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const app = express();
@@ -32,6 +33,7 @@ async function run() {
     const favoritesCollection = db.collection("favorites");
     const trainerApplicationCollection = db.collection("trainerApplications");
     const usersCollection = db.collection("user");
+    const bookingsCollection = db.collection("bookings"); // Explicitly mapped
 
     // Create Class
     app.post("/api/classes", async (req, res) => {
@@ -133,17 +135,45 @@ async function run() {
     });
 
     // Home section featured classes
+    // Home section featured classes with dynamic booking counts
     app.get("/api/classes/featured", async (req, res) => {
       try {
         const limitCount = parseInt(req.query.limit, 10) || 3;
-        const targetQueryConditions = { status: "Approved" };
-        const targetCollection =
-          global.classesCollection || db.collection("class");
 
-        const highlyBookedClasses = await targetCollection
-          .find(targetQueryConditions)
-          .sort({ bookingCount: -1 })
-          .limit(limitCount)
+        const highlyBookedClasses = await classCollection
+          .aggregate([
+            // 1. Only look at approved classes
+            { $match: { status: "Approved" } },
+
+            // 2. Convert class _id to string to match how it's stored in bookingsCollection
+            {
+              $addFields: {
+                classIdStr: { $toString: "$_id" },
+              },
+            },
+
+            // 3. Pull matching rows from the bookings collection
+            {
+              $lookup: {
+                from: "bookings",
+                localField: "classIdStr",
+                foreignField: "classId",
+                as: "matchedBookings",
+              },
+            },
+
+            // 4. Dynamically count the size of the array
+            {
+              $addFields: {
+                bookingCount: { $size: "$matchedBookings" },
+              },
+            },
+
+            // 5. Clean up the response and sort by actual real-time popularity
+            { $project: { matchedBookings: 0, classIdStr: 0 } },
+            { $sort: { bookingCount: -1 } },
+            { $limit: limitCount },
+          ])
           .toArray();
 
         res.status(200).json({
@@ -152,14 +182,14 @@ async function run() {
           classes: highlyBookedClasses,
         });
       } catch (error) {
+        console.error("Aggregation breakdown:", error);
         res.status(500).json({
           success: false,
           error:
-            "Internal server processing failure while streaming featured classes data records.",
+            "Internal server processing failure while compiling featured classes.",
         });
       }
     });
-
     // Forum posts latest pulse
     app.get("/api/forum-posts/latest", async (req, res) => {
       try {
@@ -254,9 +284,7 @@ async function run() {
       }
     });
 
-    /* -----------------------------------------
-     CHECK IF USER FAVORITED THIS CLASS (NEW UNCOMMENTED)
-    ----------------------------------------- */
+    // CHECK IF USER FAVORITED THIS CLASS
     app.get("/api/favorites/check", async (req, res) => {
       try {
         const { email, classId } = req.query;
@@ -298,7 +326,6 @@ async function run() {
           await forumPostCollection.countDocuments(queryConditions);
         const fetchedResults = await forumPostCollection
           .find(queryConditions)
-          .sort({ createdAtDate: -1 })
           .skip(skipCount)
           .limit(limit)
           .toArray();
@@ -499,8 +526,8 @@ async function run() {
           image: "https://images.unsplash.com/photo-1534528741775-53994a69daeb",
         };
 
-        const bookedClassesCount = await classCollection.countDocuments({
-          bookedUsers: email,
+        const bookedClassesCount = await bookingsCollection.countDocuments({
+          userEmail: email,
         });
         const favoritesCount = await favoritesCollection.countDocuments({
           userEmail: email,
@@ -525,8 +552,8 @@ async function run() {
           success: true,
           profile: userProfile,
           counts: {
-            bookedClasses: bookedClassesCount || 8,
-            favorites: favoritesCount || 12,
+            bookedClasses: bookedClassesCount,
+            favorites: favoritesCount,
           },
           trainerApplication: {
             status: applicationStatus.status,
@@ -608,18 +635,14 @@ async function run() {
 
         res.status(200).json({ success: true, favorites: favoriteClasses });
       } catch (error) {
-        res
-          .status(500)
-          .json({
-            success: false,
-            error: "Internal execution pool logic error.",
-          });
+        res.status(500).json({
+          success: false,
+          error: "Internal execution pool logic error.",
+        });
       }
     });
 
-    /* -------------------------------------------------------------
-    POST: UNIVERSAL TOGGLE FAVORITE CLASS (ADD / REMOVE)
-    ------------------------------------------------------------- */
+    // POST: UNIVERSAL TOGGLE FAVORITE CLASS (ADD / REMOVE)
     app.post("/api/favorites/toggle", async (req, res) => {
       try {
         const { email, classId } = req.body;
@@ -665,10 +688,208 @@ async function run() {
       }
     });
 
+    // GET: VERIFY UNIQUE BOOKING STATE PRE-FLIGHT CHECK
+    app.get("/api/bookings/check", async (req, res) => {
+      try {
+        const { email, classId } = req.query;
+        if (!email || !classId) {
+          return res.status(400).json({
+            success: false,
+            error: "Missing required query constraints.",
+          });
+        }
+
+        const recordExists = await bookingsCollection.findOne({
+          userEmail: email,
+          classId: classId,
+        });
+
+        res.status(200).json({ success: true, alreadyBooked: !!recordExists });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, error: "Internal validation failure." });
+      }
+    });
+
+    // POST: CREATE SECURE STRIPE CHECKOUT SESSION PIPELINE
+    app.post("/api/checkout/create-session", async (req, res) => {
+      try {
+        const { email, classId, className, trainerName, price } = req.body;
+
+        const alreadyBooked = await bookingsCollection.findOne({
+          userEmail: email,
+          classId: classId,
+        });
+        if (alreadyBooked) {
+          return res.status(400).json({
+            success: false,
+            error: "You have already booked this class.",
+          });
+        }
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          customer_email: email,
+          mode: "payment",
+          success_url: `http://localhost:3000/booking/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `http://localhost:3000/classes/${classId}`,
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: className,
+                  description: `Trainer: ${trainerName}`,
+                },
+                unit_amount: Math.round(price * 100),
+              },
+              quantity: 1,
+            },
+          ],
+          metadata: {
+            email,
+            classId,
+            className,
+            trainerName,
+            price: price.toString(),
+          },
+        });
+
+        res.status(200).json({ success: true, url: session.url });
+      } catch (error) {
+        console.error("Stripe session initialization failed:", error);
+        res.status(500).json({
+          success: false,
+          error: "Payment pipeline processing failure.",
+        });
+      }
+    });
+
+    // GET: PULL DETAILS FROM DATABASE UPON SUCCESS REDIRECT
+
+    app.get("/api/bookings/receipt", async (req, res) => {
+      const { session_id } = req.query;
+
+      if (!session_id) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Missing session token." });
+      }
+
+      try {
+        // 1. Check if the booking record already exists in the database
+        let bookingRecord = await bookingsCollection.findOne({
+          transactionId: session_id,
+        });
+
+        // 2. If it doesn't exist, retrieve it from Stripe and save it
+        if (!bookingRecord) {
+          const session = await stripe.checkout.sessions.retrieve(session_id);
+
+          if (session && session.payment_status === "paid") {
+            // Extract attributes cleanly from Stripe metadata safely with clear fallbacks
+            const className = session.metadata?.className;
+            const trainerName = session.metadata?.trainerName;
+            const userEmail =
+              session.customer_details?.email || session.metadata?.email;
+            const classId = session.metadata?.classId;
+
+            // Fix the NaN bug: Stripe provides amount_total in cents
+            const amountPaid = session.amount_total
+              ? session.amount_total / 100
+              : 45.0;
+
+            bookingRecord = {
+              transactionId: session.id,
+              userEmail,
+              classId,
+              className,
+              trainerName,
+              classDate: "OCT 24", // Adjust dynamically if passed in metadata
+              startTime: "06:00 AM EST", // Adjust dynamically if passed in metadata
+              location: "Elite Zone 4, Main Deck",
+              orderId:
+                session.metadata?.orderId ||
+                `EVX-${Math.floor(10000 + Math.random() * 90000)}-B`,
+              paymentDate: new Date().toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              }),
+              paymentMethod:
+                session.payment_method_types?.[0] || "Card via Stripe",
+              amountPaid: Number(amountPaid),
+              createdAt: new Date(),
+            };
+
+            // Atomically write code inside MongoDB to avoid duplicate items on fast refreshing
+            await bookingsCollection.updateOne(
+              { transactionId: session_id },
+              { $setOnInsert: bookingRecord },
+              { upsert: true },
+            );
+
+            // Increment class document's booking metrics metric cleanly
+            if (classId && ObjectId.isValid(classId)) {
+              await classCollection.updateOne(
+                { _id: new ObjectId(classId) },
+                { $inc: { bookingCount: 1 } },
+              );
+            }
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: "Transaction unpaid or invalid.",
+            });
+          }
+        }
+
+        // Return the saved or retrieved record to your frontend layout mapping clean
+        res.status(200).json({ success: true, booking: bookingRecord });
+      } catch (error) {
+        console.error("Database receipt sync failed:", error);
+        res.status(500).json({
+          success: false,
+          error: "Internal Server Error syncing transaction.",
+        });
+      }
+    });
+
+    // GET: FETCH BOOKINGS SPECIFIC TO A USER EMAIL/ID
+    app.get("/api/user/bookings/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        if (!email) {
+          return res
+            .status(400)
+            .json({ error: "Missing required parameter: email" });
+        }
+
+        const userBookings = await bookingsCollection
+          .find({ userEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        return res.status(200).json({
+          success: true,
+          bookings: userBookings,
+        });
+      } catch (error) {
+        console.error(
+          "Failed to query booked records database payload:",
+          error,
+        );
+        return res
+          .status(500)
+          .json({ error: "Internal Server Error syncing schedule pipeline." });
+      }
+    });
+
     await db.command({ ping: 1 });
     console.log("Connected successfully to MongoDB!");
   } catch (err) {
-    console.error(err);
+    console.error("Database connection runtime breakdown error: ", err);
   }
 }
 run().catch(console.dir);
