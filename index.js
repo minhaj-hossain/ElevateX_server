@@ -22,7 +22,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // await client.connect();
+    await client.connect();
     const db = client.db("elevatex");
 
     const classCollection = db.collection("class");
@@ -773,17 +773,16 @@ async function run() {
       }
 
       try {
-        // 1. Check if the booking record already exists in the database
+        
         let bookingRecord = await bookingsCollection.findOne({
           transactionId: session_id,
         });
 
-        // 2. If it doesn't exist, retrieve it from Stripe and save it
         if (!bookingRecord) {
           const session = await stripe.checkout.sessions.retrieve(session_id);
 
           if (session && session.payment_status === "paid") {
-            // Extract attributes cleanly from Stripe metadata safely with clear fallbacks
+         
             const className = session.metadata?.className;
             const trainerName = session.metadata?.trainerName;
             const userEmail =
@@ -825,7 +824,6 @@ async function run() {
               { upsert: true },
             );
 
-            // Increment class document's booking metrics metric cleanly
             if (classId && ObjectId.isValid(classId)) {
               await classCollection.updateOne(
                 { _id: new ObjectId(classId) },
@@ -840,7 +838,7 @@ async function run() {
           }
         }
 
-        // Return the saved or retrieved record to your frontend layout mapping clean
+    
         res.status(200).json({ success: true, booking: bookingRecord });
       } catch (error) {
         console.error("Database receipt sync failed:", error);
@@ -912,15 +910,11 @@ async function run() {
       }
     });
 
-    // -------------------------------------------------------------
-    // 1. GET ALL USERS WITH OVERVIEW METRICS
-    // -------------------------------------------------------------
     app.get("/api/admin/users", async (req, res) => {
       try {
         // Fetch users list
         const users = await usersCollection.find({}).toArray();
 
-        // Dynamically calculate metrics from user collection data to populate cards matching image_f46e5b.png
         const totalUsers = users.length;
         const activeTrainers = users.filter(
           (u) => u.role?.toLowerCase() === "trainer",
@@ -929,7 +923,6 @@ async function run() {
           (u) => u.status?.toLowerCase() === "blocked",
         ).length;
 
-        // Simulate new signups metric calculation
         const newSignups = users.filter((u) => {
           if (!u.joinDate) return false;
           const joined = new Date(u.joinDate);
@@ -956,13 +949,11 @@ async function run() {
       }
     });
 
-    // -------------------------------------------------------------
-    // 2. TOGGLE USER BLOCK/UNBLOCK STATUS (SOFT BLOCK)
-    // -------------------------------------------------------------
+    
     app.patch("/api/admin/users/:id/toggle-block", async (req, res) => {
       try {
         const userId = req.params.id;
-        const { currentStatus } = req.body; // Expects "Active" or "Blocked"
+        const { currentStatus } = req.body; 
 
         const newStatus = currentStatus === "Blocked" ? "Active" : "Blocked";
 
@@ -991,9 +982,7 @@ async function run() {
       }
     });
 
-    // -------------------------------------------------------------
-    // 3. PROMOTE SYSTEM ACCOUNT STATUS TO ADMIN
-    // -------------------------------------------------------------
+    
     app.patch("/api/admin/users/:id/make-admin", async (req, res) => {
       try {
         const userId = req.params.id;
@@ -1023,9 +1012,7 @@ async function run() {
       }
     });
 
-    // -------------------------------------------------------------
-    // 1. GET ALL PENDING TRAINER APPLICATIONS WITH ANCHOR METRICS
-    // -------------------------------------------------------------
+  
     app.get("/api/admin/trainer-applications", async (req, res) => {
       try {
         const applications = await trainerApplicationCollection
@@ -1068,7 +1055,7 @@ async function run() {
       try {
         const { email } = req.query;
 
-        console.log(email);
+        // console.log(email);
 
         const application = await trainerApplicationCollection.findOne({
           email,
@@ -1081,7 +1068,7 @@ async function run() {
           });
         }
 
-        console.log(application);
+        // console.log(application);
 
         res.json({
           status: application.status,
